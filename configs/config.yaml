@@ -1,0 +1,11 @@
+chunking:
+  chunk_size: 1000
+  chunk_overlap: 200
+retrieval:
+  k: 5 
+  graph_max_hops: 2
+  rff_k: 60
+generation:
+  temperature: 0.0
+  max_output_tokens: 2048
+  
