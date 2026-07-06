@@ -3,11 +3,13 @@ Graph-based retriever — tracks cross-references between legal articles.
 Uses NetworkX to store and traverse the relation graph.
 """
 from __future__ import annotations
+import pickle
 import re
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+from configs.setting import settings
 
 try:
     import networkx as nx
@@ -30,6 +32,7 @@ class LegalGraph:
 
     def build_from_chunks(self, chunks: list[dict]) -> None:
         """Build graph from chunked documents by detecting cross-references."""
+        self.graph.clear()
         # Add nodes
         for i, chunk in enumerate(chunks):
             node_id = self._chunk_id(chunk, i)
@@ -51,6 +54,25 @@ class LegalGraph:
                         self.graph.add_edge(src_id, other_id, reference=f"Điều {ref_article}")
 
         print(f"  ✅ Legal graph built: {self.graph.number_of_nodes()} nodes, {self.graph.number_of_edges()} edges")
+
+    def save(self, path: str | None = None) -> None:
+        """Persist the graph to disk."""
+        if path is None:
+            path = settings.graph_index_path
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            pickle.dump(self.graph, f)
+        print(f"  ✅ Legal graph saved to {path}")
+
+    def load(self, path: str | None = None) -> None:
+        """Load a persisted graph from disk."""
+        if path is None:
+            path = settings.graph_index_path
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Legal graph not found at: {path}")
+        with open(path, "rb") as f:
+            self.graph = pickle.load(f)
+        print(f"  ✅ Legal graph loaded ({self.graph.number_of_nodes()} nodes)")
 
     def get_related(self, query_chunks: list[dict], max_hops: int = 2) -> list[dict]:
         """
@@ -117,3 +139,11 @@ def get_graph() -> LegalGraph:
 def build_graph(chunks: list[dict]) -> None:
     graph = get_graph()
     graph.build_from_chunks(chunks)
+    graph.save()
+
+
+def load_graph(path: str | None = None) -> LegalGraph:
+    graph = get_graph()
+    if graph.graph.number_of_nodes() == 0:
+        graph.load(path)
+    return graph

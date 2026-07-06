@@ -70,8 +70,14 @@ class BM25Index:
 
 
 def _tokenize(text: str) -> list[str]:
-    """Simple Vietnamese tokenizer: lowercase + split on whitespace/punctuation."""
+    """Tokenize Vietnamese text for BM25, with a regex fallback."""
     text = text.lower()
+    try:
+        from underthesea import word_tokenize
+
+        text = word_tokenize(text, format="text")
+    except Exception:
+        pass
     # Keep Vietnamese characters and digits
     tokens = re.findall(r"[\w]+", text, re.UNICODE)
     # Remove very short tokens (1 char)

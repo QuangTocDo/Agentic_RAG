@@ -63,8 +63,9 @@ def main():
 
     # Step 4: Store in ChromaDB
     print("\n💾 Bước 4: Lưu vào ChromaDB (vector store)...")
-    from src.indexing.chroma_store import add_documents
+    from src.indexing.chroma_store import add_documents, reset_collection
 
+    reset_collection()
     add_documents(all_chunks)
 
     # Step 5: Build BM25 index

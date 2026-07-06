@@ -66,8 +66,22 @@ class Settings:
         return os.environ.get("GOOGLE_API_KEY", "")
 
     @property
+    def hf_token(self) -> str:
+        return os.environ.get("HF_TOKEN", "")
+
+
+    @property
     def llm_model(self) -> str:
         return os.environ.get("LLM_MODEL", "gemini-1.5-flash")
+
+    @property
+    def llm_provider(self) -> str:
+        return os.environ.get("LLM_PROVIDER", "gemini")
+
+    @property
+    def vllm_api_base(self) -> str:
+        return os.environ.get("VLLM_API_BASE", "http://localhost:8000/v1")
+
 
     @property
     def embedding_model(self) -> str:
@@ -89,6 +103,10 @@ class Settings:
         return os.environ.get("BM25_INDEX_PATH", str(_PROJECT_ROOT / "data" / "bm25_index.pkl"))
 
     @property
+    def graph_index_path(self) -> str:
+        return os.environ.get("GRAPH_INDEX_PATH", str(_PROJECT_ROOT / "data" / "legal_graph.pkl"))
+
+    @property
     def chunk_size(self) -> int:
         return self.get("chunking.chunk_size", 1000)
 
@@ -102,7 +120,18 @@ class Settings:
 
     @property
     def rrf_k(self) -> int:
-        return self.get("retrieval.rff_k", 60)
+        return self.get("retrieval.rrf_k", self.get("retrieval.rff_k", 60))
+
+    @property
+    def graph_max_hops(self) -> int:
+        return self.get("retrieval.graph_max_hops", 2)
+
+    @property
+    def use_reranker(self) -> bool:
+        value = self.get("retrieval.use_reranker", True)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     @property
     def temperature(self) -> float:

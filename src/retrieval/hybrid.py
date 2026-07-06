@@ -33,7 +33,14 @@ def hybrid_search(query: str, k: int | None = None) -> list[dict]:
 
     # Reciprocal Rank Fusion
     fused = reciprocal_rank_fusion(dense_results, bm25_results, k=rrf_k)
-    return fused[:k]
+    expanded = _expand_with_graph(fused[:k], max_hops=settings.graph_max_hops)
+    combined = _deduplicate(fused + expanded)
+
+    if settings.use_reranker and combined:
+        from src.retrieval.reranker import rerank
+
+        return rerank(query, combined, top_k=k)
+    return combined[:k]
 
 
 def reciprocal_rank_fusion(
@@ -64,3 +71,39 @@ def reciprocal_rank_fusion(
         {**doc_map[key], "rrf_score": scores[key]}
         for key in sorted_keys
     ]
+
+
+def _expand_with_graph(seed_docs: list[dict], max_hops: int) -> list[dict]:
+    """Add related legal articles from the persisted cross-reference graph."""
+    if not seed_docs or max_hops <= 0:
+        return []
+    try:
+        from src.retrieval.graph import load_graph
+
+        graph = load_graph()
+        return graph.get_related(seed_docs, max_hops=max_hops)
+    except FileNotFoundError:
+        print("  ⚠️  Legal graph not found, skipping graph expansion")
+        return []
+    except ImportError as e:
+        print(f"  ⚠️  Graph retrieval unavailable ({e})")
+        return []
+
+
+def _deduplicate(documents: list[dict]) -> list[dict]:
+    """Keep first occurrence of each retrieved chunk."""
+    seen = set()
+    unique = []
+    for doc in documents:
+        meta = doc.get("metadata", {})
+        key = (
+            meta.get("source"),
+            meta.get("article"),
+            meta.get("sub_chunk"),
+            doc.get("page_content", "")[:200],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(doc)
+    return unique

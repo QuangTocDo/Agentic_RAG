@@ -17,9 +17,9 @@ def respond(message: str, history: list) -> str:
         return "Vui lòng nhập câu hỏi pháp lý."
 
     try:
-        from src.agents.orchestrator import answer_question
+        from src.agents.orchestrator import chat
 
-        answer = answer_question(message)
+        answer = chat(message, history)
         return answer
     except ValueError as e:
         return str(e)

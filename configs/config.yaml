@@ -4,7 +4,8 @@ chunking:
 retrieval:
   k: 5 
   graph_max_hops: 2
-  rff_k: 60
+  rrf_k: 60
+  use_reranker: true
 generation:
   temperature: 0.0
   max_output_tokens: 2048

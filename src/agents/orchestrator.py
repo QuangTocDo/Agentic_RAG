@@ -21,6 +21,6 @@ def chat(question: str, history: list[dict] | None = None) -> str:
     Chat-compatible entry point for Gradio.
     Accepts question + conversation history and returns answer string.
     """
-    # For now, each question is treated independently (stateless).
-    # History can be used in the future for multi-turn conversations.
-    return answer_question(question)
+    from src.agents.rag_agent import ask
+
+    return ask(question, history=history)

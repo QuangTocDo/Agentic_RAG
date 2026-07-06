@@ -1,24 +1,68 @@
 version: "3.8"
 
 services:
-  api:
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: qwen-vllm-backend-nginx
+    environment:
+      - CUDA_VISIBLE_DEVICES=0, 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    ports:
+      - "8012:8000"
+    volumes:
+      - /media/disk1/model:/root/.cache/huggingface
+    command: [ "--model", "Qwen/Qwen3-0.6B", "--trust-remote-code", "--max-model-len", "2048", "--gpu-memory-utilization", "0.18", "--tensor-parallel-size", "2" ]
+    ipc: host
+    restart: unless-stopped
+
+  gateway:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: qwen-gateway-api-nginx
+    command: [ "python", "ui/app.py" ]
     ports:
-      - "8000:8000"
-    env_file:
-      - .env
+      - "8011:7860"
+    environment:
+      - VLLM_API_URL=http://vllm:8000/v1
+      - VLLM_API_BASE=http://vllm:8000/v1
+      - LLM_PROVIDER=vllm
+      - LLM_MODEL=${LLM_MODEL}
+      - CUDA_VISIBLE_DEVICES=""
     volumes:
       - ./src:/app/src
       - ./configs:/app/configs
       - ./data:/app/data
+    depends_on:
+      - vllm
+    restart: unless-stopped
 
   chromadb:
     image: chromadb/chroma:latest
+    container_name: legal-chromadb-backend
     ports:
-      - "8001:8000"
+      - "8002:8000"
     volumes:
       - ./data/chroma_db:/chroma/data
     environment:
       - IS_PERSISTENT=TRUE
+    restart: unless-stopped
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: qwen-gateway-tunnel-nginx
+    restart: unless-stopped
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command:
+      - "http"
+      - "gateway:7860"
+      - "--domain=steadier-grit-seldom.ngrok-free.dev"
+    depends_on:
+      - gateway

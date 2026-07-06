@@ -8,33 +8,20 @@ import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 SYSTEM_PROMPT = """\
-Bạn là một trợ lý pháp lý AI chuyên về luật pháp Việt Nam. Nhiệm vụ của bạn là trả lời
-các câu hỏi pháp lý bằng tiếng Việt một cách chính xác, dễ hiểu và có căn cứ pháp luật.
+Bạn là trợ lý pháp lý AI chuyên giải đáp các câu hỏi dựa trên dữ liệu luật pháp.
 
-## Nguyên tắc làm việc:
-
-1. **Luôn tra cứu trước khi trả lời**: Sử dụng công cụ tìm kiếm văn bản pháp luật
-   để tìm các điều khoản liên quan trước khi đưa ra câu trả lời.
-
-2. **Trích dẫn cụ thể**: Khi trả lời, LUÔN trích dẫn số Điều, tên Luật/Bộ luật cụ thể.
-   Ví dụ: "Theo Điều 8 Luật Hôn nhân và Gia đình 2014, ..."
-
-3. **Trả lời rõ ràng**: Tổ chức câu trả lời theo cấu trúc:
-   - Trả lời ngắn gọn câu hỏi chính
-   - Giải thích chi tiết dựa trên luật
-   - Trích dẫn điều khoản cụ thể
-
-4. **Trung thực**: Nếu không tìm thấy thông tin trong cơ sở dữ liệu,
-   hãy nói rõ và khuyên người dùng tham khảo luật sư chuyên nghiệp.
-
-5. **Không tư vấn thay luật sư**: Nhấn mạnh rằng đây chỉ là thông tin tham khảo,
-   không thay thế tư vấn pháp lý chuyên nghiệp.
+## Nguyên tắc hoạt động:
+1. **Luôn tra cứu trước**: Sử dụng công cụ tìm kiếm để tra cứu dữ liệu câu hỏi - giải đáp liên quan.
+2. **Bám sát dữ liệu gốc**: Khi tìm thấy nội dung "Giải đáp" cho câu hỏi tương tự trong tài liệu tra cứu, bạn phải TRẢ LỜI CỰC KỲ SÁT VÀ KHỚP VỚI NỘI DUNG GIẢI ĐÁP ĐÓ. Không tự ý diễn đạt lại theo ý mình, không thêm thắt thông tin hay suy luận ngoài lề.
+3. **Giữ nguyên thông tin**: Giữ nguyên mọi căn cứ pháp lý (số Điều, tên Luật) và các con số mức phạt như trong dữ liệu gốc.
 
 ## Lưu ý:
 - Trả lời hoàn toàn bằng tiếng Việt
 - Giải thích thuật ngữ pháp lý nếu người dùng có thể không hiểu
 - Nếu câu hỏi mơ hồ, hãy hỏi lại để làm rõ trước khi trả lời
 """
+
+_agent = None
 
 
 def create_agent():
@@ -54,12 +41,21 @@ def create_agent():
     return agent
 
 
-def ask(question: str) -> str:
+def get_agent():
+    """Return a cached Legal RAG agent."""
+    global _agent
+    if _agent is None:
+        _agent = create_agent()
+    return _agent
+
+
+def ask(question: str, history: list | None = None) -> str:
     """Ask the legal agent a question and return the answer."""
-    agent = create_agent()
+    agent = get_agent()
+    messages = _format_messages(question, history)
 
     result = agent.invoke(
-        {"messages": [{"role": "user", "content": question}]}
+        {"messages": messages}
     )
 
     # Extract the final AI message
@@ -73,3 +69,23 @@ def ask(question: str) -> str:
                 return msg["content"]
 
     return "Xin lỗi, tôi không thể trả lời câu hỏi này. Vui lòng thử lại."
+
+
+def _format_messages(question: str, history: list | None = None) -> list[dict]:
+    """Convert Gradio history variants into LangGraph message dicts."""
+    messages: list[dict] = []
+    for item in history or []:
+        if isinstance(item, dict):
+            role = item.get("role")
+            content = item.get("content")
+            if role in {"user", "assistant"} and content:
+                messages.append({"role": role, "content": content})
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            user_msg, assistant_msg = item[0], item[1]
+            if user_msg:
+                messages.append({"role": "user", "content": user_msg})
+            if assistant_msg:
+                messages.append({"role": "assistant", "content": assistant_msg})
+
+    messages.append({"role": "user", "content": question})
+    return messages
