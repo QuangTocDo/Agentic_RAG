@@ -61,7 +61,7 @@ def _filter_document(m_item: dict) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Ingest pdt590/vietnamese-legal-documents dataset.")
-    parser.add_argument("--limit", type=int, default=2000, help="Number of documents to ingest (default: 2000).")
+    parser.add_argument("--limit", type=int, default=2000, help="Number of documents to ingest (default: 2000). Set to 0 or negative for no limit.")
     parser.add_argument(
         "--reset",
         action="store_true",
@@ -83,7 +83,8 @@ def main():
         print("🔑 Đã phát hiện HF_TOKEN cho kết nối an toàn.")
 
     # Step 2: Stream dataset configs
-    print(f"\n📂 Bước 1: Kết nối và stream bộ dữ liệu pdt590/vietnamese-legal-documents (Giới hạn: {args.limit} tài liệu)...")
+    limit_str = f"Giới hạn: {args.limit}" if args.limit > 0 else "Không giới hạn"
+    print(f"\n📂 Bước 1: Kết nối và stream bộ dữ liệu pdt590/vietnamese-legal-documents ({limit_str} tài liệu)...")
     try:
         from datasets import load_dataset
         content_ds = load_dataset("pdt590/vietnamese-legal-documents", "content", split="data", streaming=True, token=token)
@@ -175,7 +176,7 @@ def main():
         if raw_docs_count % 200 == 0:
             print(f"   Đã quét {raw_docs_count} tài liệu thô phù hợp, loại bỏ {filtered_docs_count} tài liệu cũ...")
 
-        if raw_docs_count >= args.limit:
+        if args.limit > 0 and raw_docs_count >= args.limit:
             break
 
     # Insert remaining chunks in the buffer
