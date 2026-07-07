@@ -68,6 +68,40 @@ class BM25Index:
         self.corpus_chunks = data["corpus"]
         print(f"  ✅ BM25 index loaded ({len(self.corpus_chunks)} docs)")
 
+    def append_and_build(self, chunks: list[dict]) -> None:
+        """Load existing index, append new chunks, deduplicate, and build."""
+        try:
+            self.load()
+        except FileNotFoundError:
+            self.corpus_chunks = []
+        
+        # Deduplicate to avoid adding the same chunks twice
+        existing_contents = {c["page_content"] for c in self.corpus_chunks}
+        added_count = 0
+        for chunk in chunks:
+            if chunk["page_content"] not in existing_contents:
+                self.corpus_chunks.append(chunk)
+                existing_contents.add(chunk["page_content"])
+                added_count += 1
+        
+        print(f"  ➕ Appending {added_count} new chunks to BM25 index (Total: {len(self.corpus_chunks)})")
+        self.build(self.corpus_chunks)
+
+
+# Global cached instance
+_bm25_instance: BM25Index | None = None
+
+
+def get_bm25_index() -> BM25Index:
+    global _bm25_instance
+    if _bm25_instance is None:
+        _bm25_instance = BM25Index()
+        try:
+            _bm25_instance.load()
+        except FileNotFoundError:
+            print("  ⚠️  BM25 index file not found, initializing empty index.")
+    return _bm25_instance
+
 
 def _tokenize(text: str) -> list[str]:
     """Tokenize Vietnamese text for BM25, with a regex fallback."""

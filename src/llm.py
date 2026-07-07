@@ -104,6 +104,7 @@ def get_llm():
                 openai_api_base="https://router.huggingface.co/v1",
                 temperature=settings.temperature,
                 max_tokens=settings.max_output_tokens,
+                frequency_penalty=0.5,
             )
 
         else:

@@ -29,6 +29,7 @@ class LegalGraph:
         if nx is None:
             raise ImportError("networkx is required for graph retrieval")
         self.graph = nx.DiGraph()
+        self.content_to_node = {}
 
     def build_from_chunks(self, chunks: list[dict]) -> None:
         """Build graph from chunked documents by detecting cross-references."""
@@ -54,6 +55,34 @@ class LegalGraph:
                         self.graph.add_edge(src_id, other_id, reference=f"Điều {ref_article}")
 
         print(f"  ✅ Legal graph built: {self.graph.number_of_nodes()} nodes, {self.graph.number_of_edges()} edges")
+        self._rebuild_lookup_cache()
+
+    def append_from_chunks(self, new_chunks: list[dict]) -> None:
+        """Load existing graph, merge new chunks, detect cross-references, and save."""
+        try:
+            self.load()
+        except FileNotFoundError:
+            self.graph = nx.DiGraph()
+
+        # Collect existing chunks stored in graph nodes
+        existing_chunks = []
+        for node_id, data in self.graph.nodes(data=True):
+            # Reconstruct the chunk dict
+            existing_chunks.append({
+                "page_content": data.get("page_content", ""),
+                "metadata": data.get("metadata", {})
+            })
+
+        # Deduplicate
+        existing_contents = {c["page_content"] for c in existing_chunks}
+        for chunk in new_chunks:
+            if chunk["page_content"] not in existing_contents:
+                existing_chunks.append(chunk)
+                existing_contents.add(chunk["page_content"])
+
+        # Re-build the full graph from the merged set of chunks
+        self.build_from_chunks(existing_chunks)
+
 
     def save(self, path: str | None = None) -> None:
         """Persist the graph to disk."""
@@ -73,21 +102,31 @@ class LegalGraph:
         with open(path, "rb") as f:
             self.graph = pickle.load(f)
         print(f"  ✅ Legal graph loaded ({self.graph.number_of_nodes()} nodes)")
+        self._rebuild_lookup_cache()
+
+    def _rebuild_lookup_cache(self) -> None:
+        """Rebuild the page_content -> node_id lookup dictionary."""
+        self.content_to_node = {}
+        for node_id, data in self.graph.nodes(data=True):
+            content_key = data.get("page_content", "")[:100]
+            self.content_to_node[content_key] = node_id
 
     def get_related(self, query_chunks: list[dict], max_hops: int = 2) -> list[dict]:
         """
         Given some query result chunks, find related chunks
         by traversing cross-references up to max_hops.
         """
+        if not hasattr(self, "content_to_node") or not self.content_to_node:
+            self._rebuild_lookup_cache()
+
         related = []
         visited = set()
 
         for chunk in query_chunks:
-            # Find matching node
-            for node_id, data in self.graph.nodes(data=True):
-                if data.get("page_content", "")[:100] == chunk.get("page_content", "")[:100]:
-                    self._bfs_collect(node_id, max_hops, visited, related)
-                    break
+            key = chunk.get("page_content", "")[:100]
+            node_id = self.content_to_node.get(key)
+            if node_id:
+                self._bfs_collect(node_id, max_hops, visited, related)
 
         return related
 
@@ -140,6 +179,13 @@ def build_graph(chunks: list[dict]) -> None:
     graph = get_graph()
     graph.build_from_chunks(chunks)
     graph.save()
+
+
+def append_graph(chunks: list[dict]) -> None:
+    graph = get_graph()
+    graph.append_from_chunks(chunks)
+    graph.save()
+
 
 
 def load_graph(path: str | None = None) -> LegalGraph:

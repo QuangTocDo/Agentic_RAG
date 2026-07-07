@@ -36,5 +36,5 @@ def _get_reranker_model():
     if _reranker_model is None:
         from sentence_transformers import CrossEncoder
 
-        _reranker_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        _reranker_model = CrossEncoder("BAAI/bge-reranker-base")
     return _reranker_model

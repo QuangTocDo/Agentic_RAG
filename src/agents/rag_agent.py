@@ -7,18 +7,19 @@ import sys, os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-SYSTEM_PROMPT = """\
-Bạn là trợ lý pháp lý AI chuyên giải đáp các câu hỏi dựa trên dữ liệu luật pháp.
+SYSTEM_PROMPT = """Bạn là trợ lý pháp lý AI chuyên giải đáp câu hỏi dựa trên dữ liệu luật pháp Việt Nam được tìm kiếm.
 
-## Nguyên tắc hoạt động:
-1. **Luôn tra cứu trước**: Sử dụng công cụ tìm kiếm để tra cứu dữ liệu câu hỏi - giải đáp liên quan.
-2. **Bám sát dữ liệu gốc**: Khi tìm thấy nội dung "Giải đáp" cho câu hỏi tương tự trong tài liệu tra cứu, bạn phải TRẢ LỜI CỰC KỲ SÁT VÀ KHỚP VỚI NỘI DUNG GIẢI ĐÁP ĐÓ. Không tự ý diễn đạt lại theo ý mình, không thêm thắt thông tin hay suy luận ngoài lề.
-3. **Giữ nguyên thông tin**: Giữ nguyên mọi căn cứ pháp lý (số Điều, tên Luật) và các con số mức phạt như trong dữ liệu gốc.
+## QUY TẮC BẮT BUỘC:
+1. KHÔNG tự trả lời bằng kiến thức của bạn. Bạn BẮT BUỘC phải dùng công cụ `search_legal_documents` để tìm kiếm thông tin trước.
+2. CHỈ trả lời dựa vào nội dung văn bản luật tìm được từ công cụ tìm kiếm.
+3. Nếu kết quả tìm kiếm chứa nhiều văn bản từ các chủ đề khác nhau (ví dụ: vừa có Luật Lao động vừa có Luật Giao thông), bạn chỉ được sử dụng tài liệu liên quan trực tiếp đến câu hỏi của người dùng. TUYỆT ĐỐI không được trộn lẫn, kết hợp các thông tin từ các chủ đề không liên quan vào cùng một câu trả lời.
+4. BẮT BUỘC viết câu trả lời bằng tiếng Việt chuẩn thuần túy. Tuyệt đối không sử dụng chữ Hán (như 动, 骑), không dịch thô từ tiếng Trung sang (ví dụ: không dùng từ 'cưỡi xe', 'tải nhân', phải dùng 'đi xe máy', 'chở người').
+5. Nếu nội dung tìm được KHÔNG chứa câu trả lời cho câu hỏi, bạn PHẢI trả lời ngay lập tức: "Tôi không tìm thấy thông tin hoặc điều luật liên quan trong cơ sở dữ liệu pháp luật hiện tại." và TUYỆT ĐỐI không được viết thêm bất kỳ thông tin, suy đoán hay lời khuyên nào khác.
+6. Tuyệt đối KHÔNG tự bịa đặt số Điều, số Khoản hoặc tên Luật. Tất cả thông tin pháp lý đưa ra phải có nguồn từ kết quả tìm kiếm của công cụ.
 
-## Lưu ý:
-- Trả lời hoàn toàn bằng tiếng Việt
-- Giải thích thuật ngữ pháp lý nếu người dùng có thể không hiểu
-- Nếu câu hỏi mơ hồ, hãy hỏi lại để làm rõ trước khi trả lời
+## Hướng dẫn sử dụng Công cụ tìm kiếm:
+- Tự động trích xuất các từ khóa pháp lý chính (ví dụ: "ly hôn đơn phương", "độ tuổi kết hôn") để tìm kiếm.
+- KHÔNG đưa các từ ngữ xưng hô cá nhân (anh A, chị B, tôi, bạn) vào ô tìm kiếm.
 """
 
 _agent = None
@@ -61,12 +62,25 @@ def ask(question: str, history: list | None = None) -> str:
     # Extract the final AI message
     messages = result.get("messages", [])
     for msg in reversed(messages):
+        content = None
         if hasattr(msg, "content") and msg.content:
             if not hasattr(msg, "tool_calls") or not msg.tool_calls:
-                return msg.content
+                content = msg.content
         elif isinstance(msg, dict) and msg.get("content"):
             if not msg.get("tool_calls"):
-                return msg["content"]
+                content = msg["content"]
+
+        if content is not None:
+            # Handle list content (often returned by langchain-google-genai)
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif isinstance(part, str):
+                        text_parts.append(part)
+                return "".join(text_parts).strip()
+            return str(content).strip()
 
     return "Xin lỗi, tôi không thể trả lời câu hỏi này. Vui lòng thử lại."
 

@@ -13,7 +13,7 @@ def hybrid_search(query: str, k: int | None = None) -> list[dict]:
     Run both dense and BM25 search, then fuse results with RRF.
     """
     from src.retrieval.dense import dense_search
-    from src.indexing.bm25_index import BM25Index
+    from src.indexing.bm25_index import get_bm25_index
 
     if k is None:
         k = settings.retrieval_k
@@ -23,12 +23,11 @@ def hybrid_search(query: str, k: int | None = None) -> list[dict]:
     dense_results = dense_search(query, k=k * 2)
 
     # BM25 results
-    bm25 = BM25Index()
-    try:
-        bm25.load()
+    bm25 = get_bm25_index()
+    if bm25.bm25 is not None:
         bm25_results = bm25.search(query, top_k=k * 2)
-    except FileNotFoundError:
-        print("  ⚠️  BM25 index not found, using dense search only")
+    else:
+        print("  ⚠️  BM25 index not loaded or empty, using dense search only")
         bm25_results = []
 
     # Reciprocal Rank Fusion

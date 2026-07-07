@@ -16,6 +16,11 @@ sys.path.insert(0, PROJECT_ROOT)
 def main():
     parser = argparse.ArgumentParser(description="Ingest pdt590/vietnamese-legal-documents dataset.")
     parser.add_argument("--limit", type=int, default=2000, help="Number of documents to ingest (default: 2000).")
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Xóa database cũ trước khi nạp dữ liệu mới."
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -109,7 +114,9 @@ def main():
     print("\n💾 Bước 3: Lưu vào ChromaDB (vector store)...")
     from src.indexing.chroma_store import add_documents, reset_collection
 
-    reset_collection()
+    if args.reset:
+        print("   🧹 Đang xóa database cũ theo yêu cầu --reset...")
+        reset_collection()
     # Batch insertion to avoid massive payloads
     batch_size = 500
     for i in range(0, len(all_chunks), batch_size):
@@ -123,15 +130,20 @@ def main():
     from src.indexing.bm25_index import BM25Index
 
     bm25 = BM25Index()
-    bm25.build(all_chunks)
+    if args.reset:
+        bm25.build(all_chunks)
+    else:
+        bm25.append_and_build(all_chunks)
     bm25.save()
-    print("   ✅ Đã tạo chỉ mục tìm kiếm từ khóa BM25.")
 
     # Step 6: Build knowledge graph
     print("\n🕸️  Bước 5: Xây dựng đồ thị pháp lý (knowledge graph)...")
     try:
-        from src.retrieval.graph import build_graph
-        build_graph(all_chunks)
+        from src.retrieval.graph import build_graph, append_graph
+        if args.reset:
+            build_graph(all_chunks)
+        else:
+            append_graph(all_chunks)
         print("   ✅ Đã tạo đồ thị liên kết pháp lý.")
     except Exception as e:
         print(f"   ⚠️  Bỏ qua việc tạo đồ thị ({e})")
