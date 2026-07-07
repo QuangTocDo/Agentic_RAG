@@ -7,10 +7,56 @@ Usage:
 import argparse
 import sys
 import os
+import re
 
 # Project root
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, PROJECT_ROOT)
+
+
+def _filter_document(m_item: dict) -> bool:
+    """
+    Filter out outdated or expired documents based on title, issuance date, or document number.
+    Returns True if the document is active/latest (valid), False if it should be skipped.
+    """
+    title = m_item.get("title", "").lower()
+    issuance_date = m_item.get("issuance_date", "")
+
+    # 1. Check Blacklist of replaced/expired major laws
+    blacklist = [
+        "dân sự 2005", "dân sự năm 2005",
+        "lao động 2012", "lao động năm 2012",
+        "hôn nhân và gia đình 2000", "hôn nhân và gia đình năm 2000",
+        "đất đai 2013", "đất đai năm 2013",
+        "đất đai 2003", "đất đai năm 2003",
+        "doanh nghiệp 2014", "doanh nghiệp năm 2014",
+        "đầu tư 2014", "đầu tư năm 2014",
+        "nhà ở 2014", "nhà ở năm 2014",
+        "thương mại 2005", "thương mại năm 2005"
+    ]
+    for pattern in blacklist:
+        if pattern in title:
+            return False
+
+    # 2. Year Filter (Only keep documents from 2015 onwards)
+    year = None
+    if issuance_date and "/" in issuance_date:
+        parts = issuance_date.split("/")
+        if len(parts) == 3:
+            try:
+                year = int(parts[2])
+            except ValueError:
+                pass
+                
+    if year is None:
+        match = re.search(r"\b(19\d{2}|20\d{2})\b", title)
+        if match:
+            year = int(match.group(1))
+
+    if year is not None and year < 2015:
+        return False
+
+    return True
 
 
 def main():
@@ -49,13 +95,23 @@ def main():
         print(f"❌ Lỗi khi tải bộ dữ liệu: {e}")
         sys.exit(1)
 
-    # Step 3: Parse and chunk documents
-    print("\n🧹 Bước 2: Tải dữ liệu song song và thực hiện phân tách đoạn (chunking)...")
+    # Step 3: Parse, filter, chunk and ingest in batches
+    print("\n🧹 Bước 2: Tải dữ liệu song song, lọc hiệu lực, chunk và nạp theo lô (batch)...")
     from src.ingestion.cleaner import clean_text
     from src.ingestion.chunker import chunk_document
+    from src.indexing.chroma_store import add_documents, reset_collection
+
+    if args.reset:
+        print("   🧹 Đang xóa database cũ theo yêu cầu --reset...")
+        reset_collection()
 
     raw_docs_count = 0
-    all_chunks = []
+    filtered_docs_count = 0
+    chunk_buffer = []
+    all_chunks_for_indices = []
+    
+    batch_size = 1000  # Size of batch to insert into ChromaDB
+    total_chunks_count = 0
 
     for c_item, m_item in zip(content_ds, meta_ds):
         doc_id = c_item["id"]
@@ -63,6 +119,11 @@ def main():
         # Ensure IDs match
         if c_item["id"] != m_item["id"]:
             print(f"   ⚠️  Bỏ qua dòng bị lệch ID: Content ID {c_item['id']} != Metadata ID {m_item['id']}")
+            continue
+
+        # Heuristics filter for active / latest laws
+        if not _filter_document(m_item):
+            filtered_docs_count += 1
             continue
 
         raw_text = c_item["content"] or ""
@@ -95,56 +156,64 @@ def main():
 
         # Chunk the document into smaller sub-chunks
         doc_chunks = chunk_document(doc_item)
-        all_chunks.extend(doc_chunks)
+        
+        chunk_buffer.extend(doc_chunks)
+        all_chunks_for_indices.extend(doc_chunks)
 
         raw_docs_count += 1
+        
+        # If chunk buffer exceeds batch_size, upsert to ChromaDB
+        if len(chunk_buffer) >= batch_size:
+            start_idx = total_chunks_count
+            end_idx = start_idx + len(chunk_buffer)
+            ids = [f"pdt_{idx}" for idx in range(start_idx, end_idx)]
+            add_documents(chunk_buffer, ids=ids)
+            total_chunks_count = end_idx
+            print(f"   💾 [ChromaDB] Đã nạp xong lô {len(chunk_buffer)} phân đoạn (Lũy kế: {total_chunks_count} chunks)...")
+            chunk_buffer.clear()
+
         if raw_docs_count % 200 == 0:
-            print(f"   Đã xử lý {raw_docs_count} tài liệu thô, tạo ra {len(all_chunks)} phân đoạn...")
+            print(f"   Đã quét {raw_docs_count} tài liệu thô phù hợp, loại bỏ {filtered_docs_count} tài liệu cũ...")
 
         if raw_docs_count >= args.limit:
             break
 
-    print(f"   ✅ Hoàn tất tiền xử lý. Tổng cộng: {raw_docs_count} tài liệu thô -> {len(all_chunks)} phân đoạn RAG.")
+    # Insert remaining chunks in the buffer
+    if chunk_buffer:
+        start_idx = total_chunks_count
+        end_idx = start_idx + len(chunk_buffer)
+        ids = [f"pdt_{idx}" for idx in range(start_idx, end_idx)]
+        add_documents(chunk_buffer, ids=ids)
+        total_chunks_count = end_idx
+        print(f"   💾 [ChromaDB] Đã nạp xong lô cuối {len(chunk_buffer)} phân đoạn (Lũy kế: {total_chunks_count} chunks)...")
+        chunk_buffer.clear()
 
-    if not all_chunks:
+    print(f"   ✅ Hoàn tất nạp ChromaDB. Thống kê: quét {raw_docs_count} tài liệu phù hợp, lọc {filtered_docs_count} tài liệu cũ -> {total_chunks_count} phân đoạn.")
+
+    if not all_chunks_for_indices:
         print("❌ Lỗi: Không có phân đoạn nào được tạo ra.")
         sys.exit(1)
 
-    # Step 4: Store in ChromaDB
-    print("\n💾 Bước 3: Lưu vào ChromaDB (vector store)...")
-    from src.indexing.chroma_store import add_documents, reset_collection
-
-    if args.reset:
-        print("   🧹 Đang xóa database cũ theo yêu cầu --reset...")
-        reset_collection()
-    # Batch insertion to avoid massive payloads
-    batch_size = 500
-    for i in range(0, len(all_chunks), batch_size):
-        batch = all_chunks[i:i + batch_size]
-        ids = [f"pdt_{idx}" for idx in range(i, i + len(batch))]
-        add_documents(batch, ids=ids)
-        print(f"   Đã nạp {i + len(batch)} / {len(all_chunks)} phân đoạn vào vector store...")
-
-    # Step 5: Build BM25 index
-    print("\n🔤 Bước 4: Xây dựng BM25 index (keyword search)...")
+    # Step 4: Build BM25 index
+    print("\n🔤 Bước 3: Xây dựng BM25 index (keyword search)...")
     from src.indexing.bm25_index import BM25Index
 
     bm25 = BM25Index()
     if args.reset:
-        bm25.build(all_chunks)
+        bm25.build(all_chunks_for_indices)
     else:
-        bm25.append_and_build(all_chunks)
+        bm25.append_and_build(all_chunks_for_indices)
     bm25.save()
 
-    # Step 6: Build knowledge graph
-    print("\n🕸️  Bước 5: Xây dựng đồ thị pháp lý (knowledge graph)...")
+    # Step 5: Build knowledge graph
+    print("\n🕸️  Bước 4: Xây dựng đồ thị pháp lý (knowledge graph)...")
     try:
         from src.retrieval.graph import build_graph, append_graph
         if args.reset:
-            build_graph(all_chunks)
+            build_graph(all_chunks_for_indices)
         else:
-            append_graph(all_chunks)
-        print("   ✅ Đã tạo đồ thị liên kết pháp lý.")
+            append_graph(all_chunks_for_indices)
+        print("   ✅ Đã cập nhật đồ thị liên kết pháp lý.")
     except Exception as e:
         print(f"   ⚠️  Bỏ qua việc tạo đồ thị ({e})")
 

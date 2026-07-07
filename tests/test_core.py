@@ -16,6 +16,20 @@ class ChunkerTests(unittest.TestCase):
 
         self.assertEqual([c["metadata"]["article"] for c in chunks], ["header", "1", "2"])
 
+    def test_chunk_document_splits_by_clause(self):
+        doc = {
+            "page_content": "Điều 1. Nội dung điều 1\n1. Đây là khoản một có độ dài tương đối để test việc chia tách.\n2. Đây là khoản hai của điều luật này.",
+            "metadata": {"filename": "test.txt", "source": "/tmp/test.txt"},
+        }
+        # Set a small chunk_size to force splitting on Clause level
+        chunks = chunk_document(doc, chunk_size=80, chunk_overlap=0)
+        
+        # Verify that we split into multiple chunks and preserved clause boundaries
+        self.assertTrue(len(chunks) >= 2)
+        # Check that the clauses are split cleanly
+        self.assertIn("1. Đây là khoản một", chunks[1]["page_content"])
+        self.assertIn("2. Đây là khoản hai", chunks[-1]["page_content"])
+
 
 class RetrievalTests(unittest.TestCase):
     def test_rrf_prefers_documents_appearing_in_multiple_lists(self):

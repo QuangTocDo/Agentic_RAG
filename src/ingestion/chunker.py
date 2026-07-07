@@ -78,9 +78,85 @@ def _split_by_articles(text: str) -> list[tuple[str, str]]:
 
 
 def _recursive_split(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
-    """Simple recursive character text splitter."""
-    separators = ["\n\n", "\n", ". ", ", ", " "]
+    """Hierarchical splitter for legal text: Clause -> Point -> Newline -> Sentence -> Space."""
+    if len(text) <= chunk_size:
+        return [text]
+
+    # Step 1: Try splitting by Clause (e.g., "\n1. ", "\n2. ")
+    clauses = _split_by_pattern(text, r"(\n\d+\.\s+)")
+    if len(clauses) > 1:
+        return _merge_parts(clauses, chunk_size, chunk_overlap)
+
+    # Step 2: Try splitting by Point (e.g., "\na) ", "\nb) ")
+    points = _split_by_pattern(text, r"(\n[a-zđ]\)\s+)")
+    if len(points) > 1:
+        return _merge_parts(points, chunk_size, chunk_overlap)
+
+    # Step 3: Try splitting by Paragraph/Newline
+    paragraphs = text.split("\n")
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+    if len(paragraphs) > 1:
+        return _merge_parts(paragraphs, chunk_size, chunk_overlap)
+
+    # Step 4: Fallback to recursive character splitting
+    separators = [". ", ", ", " "]
     return _split_with_separators(text, separators, chunk_size, chunk_overlap)
+
+
+def _split_by_pattern(text: str, pattern: str) -> list[str]:
+    """Split text by regex pattern, keeping the separator matched prefix with the following part."""
+    parts = re.split(pattern, text)
+    if len(parts) <= 1:
+        return [text]
+    
+    result = []
+    if parts[0].strip():
+        result.append(parts[0].strip())
+        
+    for i in range(1, len(parts) - 1, 2):
+        sep = parts[i]
+        body = parts[i+1]
+        result.append((sep + body).strip())
+    
+    # Catch any trailing odd part
+    if len(parts) % 2 == 0 and parts[-1].strip():
+        result.append(parts[-1].strip())
+        
+    return result
+
+
+def _merge_parts(parts: list[str], chunk_size: int, chunk_overlap: int) -> list[str]:
+    """Merge small parts into chunks of size <= chunk_size."""
+    chunks = []
+    current = ""
+    for part in parts:
+        if not part.strip():
+            continue
+        candidate = current + "\n" + part if current else part
+        if len(candidate) <= chunk_size:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            if len(part) > chunk_size:
+                # Recurse on the large part
+                sub = _recursive_split(part, chunk_size, chunk_overlap)
+                chunks.extend(sub)
+                current = ""
+            else:
+                current = part
+    if current:
+        chunks.append(current)
+
+    # Add overlap
+    if chunk_overlap > 0 and len(chunks) > 1:
+        overlapped = [chunks[0]]
+        for i in range(1, len(chunks)):
+            overlap_text = chunks[i - 1][-chunk_overlap:]
+            overlapped.append(overlap_text + "\n" + chunks[i])
+        chunks = overlapped
+
+    return chunks
 
 
 def _split_with_separators(
