@@ -2,7 +2,11 @@ import unittest
 
 from src.ingestion.chunker import chunk_document
 from src.indexing.chroma_store import _stable_chunk_id
-from src.retrieval.hybrid import reciprocal_rank_fusion, _deduplicate
+from src.retrieval.hybrid import (
+    reciprocal_rank_fusion,
+    _deduplicate,
+    _exact_legal_matches,
+)
 
 
 class ChunkerTests(unittest.TestCase):
@@ -47,6 +51,32 @@ class RetrievalTests(unittest.TestCase):
         second = {"page_content": "same content", "metadata": {"source": "s", "article": "1"}}
 
         self.assertEqual(_deduplicate([first, second]), [first])
+
+    def test_exact_legal_matches_respects_article_and_law_hint(self):
+        labor = {
+            "page_content": "Điều 35. Quyền đơn phương chấm dứt hợp đồng lao động.",
+            "metadata": {
+                "article": "35",
+                "law_name": "BỘ LUẬT LAO ĐỘNG 2019",
+                "chunk_id": "labor-35",
+            },
+        }
+        marriage = {
+            "page_content": "Điều 35. Nội dung khác.",
+            "metadata": {
+                "article": "35",
+                "law_name": "LUẬT HÔN NHÂN VÀ GIA ĐÌNH 2014",
+                "chunk_id": "marriage-35",
+            },
+        }
+
+        matches = _exact_legal_matches(
+            "Theo Điều 35 Bộ luật Lao động thì người lao động được quyền gì?",
+            [marriage, labor],
+            limit=5,
+        )
+
+        self.assertEqual(matches, [{**labor, "exact_match_score": 1.0}])
 
 
 class IndexingTests(unittest.TestCase):

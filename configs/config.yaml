@@ -2,11 +2,11 @@ chunking:
   chunk_size: 1000
   chunk_overlap: 200
 retrieval:
-  k: 5 
-  graph_max_hops: 2
+  k: 5
+  graph_max_hops: 1
   rrf_k: 60
-  use_reranker: true
+  use_reranker: false
+  use_llm_grader: false
 generation:
   temperature: 0.0
-  max_output_tokens: 2048
-  
+  max_output_tokens: 1024

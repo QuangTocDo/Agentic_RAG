@@ -77,17 +77,22 @@ def get_llm():
     if _llm is None:
         provider = settings.llm_provider
 
-        if provider == "vllm":
+        if provider in ("vllm", "ollama"):
             # pyrefly: ignore [missing-import]
             from langchain_openai import ChatOpenAI
 
-            _llm = ChatOpenAI(
-                model=settings.llm_model,
-                openai_api_key="none-needed-for-vllm",
-                openai_api_base=settings.vllm_api_base,
-                temperature=settings.temperature,
-                max_tokens=settings.max_output_tokens,
-            )
+            kwargs = {
+                "model": settings.llm_model,
+                "openai_api_key": "none-needed-for-vllm",
+                "openai_api_base": settings.vllm_api_base,
+                "temperature": settings.temperature,
+                "max_tokens": settings.max_output_tokens,
+            }
+            # For Ollama or Ngrok-tunnelled Ollama endpoints, pass context length configurations
+            if provider == "ollama" or (settings.vllm_api_base and ("ollama" in settings.vllm_api_base or "ngrok" in settings.vllm_api_base)):
+                kwargs["extra_body"] = {"options": {"num_ctx": 8192}}
+
+            _llm = ChatOpenAI(**kwargs)
         elif provider == "huggingface":
             # pyrefly: ignore [missing-import]
             from langchain_openai import ChatOpenAI

@@ -25,6 +25,7 @@ def chunk_document(doc: dict, chunk_size: int | None = None, chunk_overlap: int 
 
     text = doc["page_content"]
     base_meta = doc.get("metadata", {})
+    doc_id = base_meta.get("doc_id", base_meta.get("filename", "unknown"))
 
     # Split by articles ("Điều X.")
     articles = _split_by_articles(text)
@@ -33,7 +34,7 @@ def chunk_document(doc: dict, chunk_size: int | None = None, chunk_overlap: int 
     for article_text, article_num in articles:
         # If article is small enough, keep as one chunk
         if len(article_text) <= chunk_size:
-            meta = {**base_meta, "article": article_num}
+            meta = {**base_meta, "article": article_num, "sub_chunk": 0}
             chunks.append({"page_content": article_text.strip(), "metadata": meta})
         else:
             # Split long articles into sub-chunks
@@ -46,8 +47,14 @@ def chunk_document(doc: dict, chunk_size: int | None = None, chunk_overlap: int 
     if not chunks:
         sub_chunks = _recursive_split(text, chunk_size, chunk_overlap)
         for i, sc in enumerate(sub_chunks):
-            meta = {**base_meta, "sub_chunk": i}
+            meta = {**base_meta, "sub_chunk": i, "article": "none"}
             chunks.append({"page_content": sc.strip(), "metadata": meta})
+
+    # Generate unique chunk_ids for all chunks
+    for idx, chunk in enumerate(chunks):
+        art = chunk["metadata"].get("article", "none")
+        sub = chunk["metadata"].get("sub_chunk", 0)
+        chunk["metadata"]["chunk_id"] = f"{doc_id}_art_{art}_sub_{sub}_idx_{idx}"
 
     return chunks
 

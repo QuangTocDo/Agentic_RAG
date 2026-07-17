@@ -17,9 +17,9 @@ def respond(message: str, history: list) -> str:
         return "Vui lòng nhập câu hỏi pháp lý."
 
     try:
-        from src.agents.orchestrator import chat
+        from src.agents.rag_agent import ask
 
-        answer = chat(message, history)
+        answer = ask(message, history)
         return answer
     except ValueError as e:
         return str(e)
@@ -27,9 +27,8 @@ def respond(message: str, history: list) -> str:
         return (
             f"❌ Đã xảy ra lỗi: {str(e)}\n\n"
             "Vui lòng kiểm tra:\n"
-            "1. File .env đã cấu hình GOOGLE_API_KEY\n"
-            "2. Đã chạy `python scripts/ingest.py` để nạp dữ liệu\n"
-            "3. Đã cài đặt đầy đủ thư viện: `pip install -r requirements.txt`"
+            "1. Đã chạy `python scripts/ingest.py` để nạp dữ liệu\n"
+            "2. Đã cài đặt đầy đủ thư viện: `pip install -r requirements.txt`"
         )
 
 

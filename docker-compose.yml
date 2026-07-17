@@ -22,7 +22,7 @@ services:
     restart: unless-stopped
 
   gateway:
-    build:
+    build: 
       context: .
       dockerfile: Dockerfile
     container_name: qwen-gateway-api-nginx

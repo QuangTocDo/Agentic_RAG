@@ -19,8 +19,26 @@ def normalize_unicode(text: str) -> str:
 
 
 def strip_html(text: str) -> str:
-    """Remove any HTML tags."""
-    return re.sub(r"<[^>]+>", "", text)
+    """Remove HTML tags cleanly using BeautifulSoup to preserve spacing and structure."""
+    if not text:
+        return ""
+    # Check if text contains HTML elements
+    if "<" in text and ">" in text:
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(text, "html.parser")
+            
+            # Insert a newline or space around block level tags to prevent text merging
+            for tag_name in ["p", "div", "tr", "td", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6"]:
+                for tag in soup.find_all(tag_name):
+                    tag.insert_before("\n")
+                    tag.insert_after("\n")
+                    
+            text = soup.get_text()
+        except Exception:
+            # Fallback to regex if bs4 is not available or errors out
+            text = re.sub(r"<[^>]+>", " ", text)
+    return text
 
 
 def collapse_whitespace(text: str) -> str:

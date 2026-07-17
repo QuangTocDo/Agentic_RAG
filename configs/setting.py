@@ -134,6 +134,13 @@ class Settings:
         return bool(value)
 
     @property
+    def use_llm_grader(self) -> bool:
+        value = self.get("retrieval.use_llm_grader", True)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    @property
     def temperature(self) -> float:
         return self.get("generation.temperature", 0.0)
 

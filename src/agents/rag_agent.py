@@ -7,32 +7,33 @@ import sys, os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-SYSTEM_PROMPT = """Bạn là trợ lý pháp lý AI chuyên giải đáp câu hỏi dựa trên dữ liệu luật pháp Việt Nam được tìm kiếm.
+SYSTEM_PROMPT = """Bạn là chuyên gia pháp lý AI, chỉ trả lời dựa trên tài liệu luật pháp Việt Nam đã tìm kiếm được.
 
-## QUY TẮC BẮT BUỘC:
-1. KHÔNG tự trả lời bằng kiến thức của bạn. Bạn BẮT BUỘC phải dùng công cụ `search_legal_documents` để tìm kiếm thông tin trước.
-2. CHỈ trả lời dựa vào nội dung văn bản luật tìm được từ công cụ tìm kiếm.
-3. Nếu kết quả tìm kiếm chứa nhiều văn bản từ các chủ đề khác nhau (ví dụ: vừa có Luật Lao động vừa có Luật Giao thông), bạn chỉ được sử dụng tài liệu liên quan trực tiếp đến câu hỏi của người dùng. TUYỆT ĐỐI không được trộn lẫn, kết hợp các thông tin từ các chủ đề không liên quan vào cùng một câu trả lời.
-4. BẮT BUỘC viết câu trả lời bằng tiếng Việt chuẩn thuần túy. Tuyệt đối không sử dụng chữ Hán (như 动, 骑), không dịch thô từ tiếng Trung sang (ví dụ: không dùng từ 'cưỡi xe', 'tải nhân', phải dùng 'đi xe máy', 'chở người').
-5. Nếu nội dung tìm được KHÔNG chứa câu trả lời cho câu hỏi, bạn PHẢI trả lời ngay lập tức: "Tôi không tìm thấy thông tin hoặc điều luật liên quan trong cơ sở dữ liệu pháp luật hiện tại." và TUYỆT ĐỐI không được viết thêm bất kỳ thông tin, suy đoán hay lời khuyên nào khác.
-6. Tuyệt đối KHÔNG tự bịa đặt số Điều, số Khoản hoặc tên Luật. Tất cả thông tin pháp lý đưa ra phải có nguồn từ kết quả tìm kiếm của công cụ.
+## QUY TRÌNH BẮT BUỘC:
+Bước 1: Dùng `hybrid_search_tool` để tìm tài liệu liên quan.
+Bước 2: Nếu câu hỏi về sửa đổi/bãi bỏ/dẫn chiếu nhiều điều luật, dùng thêm `graph_traverse_tool`.
+Bước 3: Đọc kỹ TẤT CẢ tài liệu trả về, tổng hợp và viết câu trả lời NGAY — KHÔNG gọi thêm công cụ nào nữa.
 
-## Hướng dẫn sử dụng Công cụ tìm kiếm:
-- Tự động trích xuất các từ khóa pháp lý chính (ví dụ: "ly hôn đơn phương", "độ tuổi kết hôn") để tìm kiếm.
-- KHÔNG đưa các từ ngữ xưng hô cá nhân (anh A, chị B, tôi, bạn) vào ô tìm kiếm.
+## QUY TẮC VIẾT CÂU TRẢ LỜI (BẮT BUỘC):
+✅ PHẢI trích dẫn số Điều, tên luật và năm ban hành cụ thể (VD: "Theo Điều 36, Bộ luật Lao động 2019...").
+✅ PHẢI trả lời bằng tiếng Việt rõ ràng, mạch lạc.
+✅ Nếu nhiều tài liệu liên quan, hãy tổng hợp và trình bày theo thứ tự logic.
+❌ TUYỆT ĐỐI không được tự suy diễn, bịa đặt hoặc thêm thông tin không có trong tài liệu tìm được.
+❌ TUYỆT ĐỐI không được viết số Điều/Khoản không có trong tài liệu.
+❌ Nếu tài liệu tìm được KHÔNG chứa thông tin đủ để trả lời, phải nói rõ: "Tôi không tìm thấy quy định cụ thể về vấn đề này trong cơ sở dữ liệu pháp luật hiện tại. Bạn nên tham khảo ý kiến luật sư chuyên nghiệp."
 """
 
 _agent = None
 
 
 def create_agent():
-    """Create the Legal RAG ReAct agent."""
+    """Create the Legal RAG ReAct agent with minimal tools for speed."""
     from langgraph.prebuilt import create_react_agent
     from src.llm import get_llm
-    from src.tools.retrieval_tools import get_retrieval_tools
+    from src.tools.retrieval_tools import hybrid_search_tool, graph_traverse_tool
 
     llm = get_llm()
-    tools = get_retrieval_tools()
+    tools = [hybrid_search_tool, graph_traverse_tool]
 
     agent = create_react_agent(
         model=llm,
@@ -62,25 +63,33 @@ def ask(question: str, history: list | None = None) -> str:
     # Extract the final AI message
     messages = result.get("messages", [])
     for msg in reversed(messages):
-        content = None
-        if hasattr(msg, "content") and msg.content:
-            if not hasattr(msg, "tool_calls") or not msg.tool_calls:
-                content = msg.content
-        elif isinstance(msg, dict) and msg.get("content"):
-            if not msg.get("tool_calls"):
-                content = msg["content"]
+        is_ai = False
+        if hasattr(msg, "type") and msg.type == "ai":
+            is_ai = True
+        elif isinstance(msg, dict) and msg.get("role") == "assistant":
+            is_ai = True
 
-        if content is not None:
-            # Handle list content (often returned by langchain-google-genai)
-            if isinstance(content, list):
-                text_parts = []
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        text_parts.append(part.get("text", ""))
-                    elif isinstance(part, str):
-                        text_parts.append(part)
-                return "".join(text_parts).strip()
-            return str(content).strip()
+        if is_ai:
+            has_tools = False
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                has_tools = True
+            elif isinstance(msg, dict) and msg.get("tool_calls"):
+                has_tools = True
+
+            if not has_tools:
+                content = msg.content if hasattr(msg, "content") else msg.get("content", "")
+                if content:
+                    # Handle list content (often returned by langchain-google-genai)
+                    if isinstance(content, list):
+                        text_parts = []
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                text_parts.append(part.get("text", ""))
+                            elif isinstance(part, str):
+                                text_parts.append(part)
+                        return "".join(text_parts).strip()
+                    return str(content).strip()
+                break  # If the final AI message is empty, stop and return the fallback below
 
     return "Xin lỗi, tôi không thể trả lời câu hỏi này. Vui lòng thử lại."
 

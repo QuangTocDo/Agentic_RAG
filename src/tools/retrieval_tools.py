@@ -3,50 +3,156 @@ LangChain tools wrapping retrieval operations for the RAG agent.
 """
 from __future__ import annotations
 import sys, os
+import json
+from typing import Any
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-
+from configs.setting import settings
 from langchain_core.tools import tool
 
 
+def _get_store():
+    from src.indexing.chroma_store import get_chroma_store
+    return get_chroma_store()
+
+
+def _get_graph():
+    from src.retrieval.graph import load_graph
+    return load_graph()
+
+
+def _doc_to_dict(d: Any) -> dict:
+    if isinstance(d, str):
+        return {"page_content": d, "metadata": {}}
+    if hasattr(d, "page_content"):
+        return {"page_content": d.page_content, "metadata": d.metadata}
+    if isinstance(d, dict):
+        return {"page_content": d.get("page_content", ""), "metadata": d.get("metadata", {})}
+    return {"page_content": str(d), "metadata": {}}
+
+
+def _format_docs_for_llm(docs: list) -> str:
+    """Format retrieved docs into clear, structured text so small LLMs can read them easily."""
+    if not docs:
+        return "Không tìm thấy tài liệu liên quan."
+    
+    parts = []
+    for i, doc in enumerate(docs, 1):
+        d = _doc_to_dict(doc)
+        meta = d.get("metadata", {})
+        law_name = meta.get("law_name", "")
+        so_ky_hieu = meta.get("so_ky_hieu", "")
+        article = meta.get("article", "")
+        hieu_luc = meta.get("tinh_trang_hieu_luc", "")
+        content = d.get("page_content", "")
+        
+        # Build header with all available metadata
+        header_parts = []
+        if law_name:
+            header_parts.append(law_name)
+        if so_ky_hieu:
+            header_parts.append(so_ky_hieu)
+        if article and article not in ("none", "header", "?"):
+            header_parts.append(f"Điều {article}")
+        if hieu_luc:
+            header_parts.append(hieu_luc)
+        
+        header = " — ".join(header_parts) if header_parts else f"Tài liệu {i}"
+        parts.append(f"=== [{i}] {header} ===\n{content}")
+    
+    return "\n\n".join(parts)
+
+
 @tool
-def search_legal_documents(query: str) -> str:
-    """Tìm kiếm văn bản pháp luật Việt Nam liên quan đến câu hỏi.
-    Sử dụng công cụ này khi cần tra cứu điều luật, quy định pháp lý,
-    hoặc tìm thông tin trong Bộ luật Dân sự, Luật Lao động, 
-    Luật Hôn nhân và Gia đình, và các văn bản pháp luật khác.
-    
-    Args:
-        query: Câu hỏi hoặc từ khóa tìm kiếm pháp luật bằng tiếng Việt.
-    
-    Returns:
-        Nội dung các điều luật liên quan được tìm thấy.
+def dense_search_tool(query: str, k: int = settings.retrieval_k) -> str:
+    """Tìm kiếm thông tin pháp lý bằng dense embeddings (vector search).
+    Sử dụng công cụ này khi cần tìm các điều luật có ý nghĩa ngữ nghĩa tương tự hoặc diễn đạt khác đi với câu hỏi.
+    """
+    from src.retrieval.dense import dense_search
+    docs = dense_search(query, k=k)
+    return json.dumps([_doc_to_dict(d) for d in docs], ensure_ascii=False)
+
+
+@tool
+def hybrid_search_tool(query: str, k: int = settings.retrieval_k) -> str:
+    """Tìm kiếm thông tin pháp lý kết hợp cả dense embeddings (vector search) và BM25 (keyword search).
+    Sử dụng công cụ này cho các câu hỏi thông thường, tìm kiếm kết hợp cả từ khóa chính xác và ngữ nghĩa.
+    Kết quả bao gồm tên luật, số hiệu, điều khoản và tình trạng hiệu lực.
     """
     from src.retrieval.hybrid import hybrid_search
-    from configs.setting import settings
+    docs = hybrid_search(query, k=k)
+    return _format_docs_for_llm(docs)
 
-    results = hybrid_search(query, k=settings.retrieval_k)
-    results = grade_documents(query, results)
 
-    if not results:
-        return "Không tìm thấy văn bản pháp luật nào liên quan đến câu hỏi."
+@tool
+def graph_traverse_tool(
+    query: str,
+    k: int = settings.retrieval_k,
+    initial_k: int = 3,
+    max_hops: int = settings.graph_max_hops,
+) -> str:
+    """Retrieve documents using graph-guided multi-hop retrieval.
+    Seed with dense search, then expand via relationship graph edges.
+    Use this for multi-hop questions about document history,
+    amendments, replacements or legal hierarchy."""
+    from src.retrieval.graph import graph_search
+    docs = graph_search(
+        _get_store(), _get_graph(), query,
+        k=k, initial_k=initial_k, max_hops=max_hops,
+    )
+    return _format_docs_for_llm(docs)
 
-    # Format results for the agent
-    output_parts = []
-    for i, doc in enumerate(results, 1):
-        meta = doc.get("metadata", {})
-        source = meta.get("law_name", meta.get("filename", "N/A"))
-        article = meta.get("article", "N/A")
-        content = doc["page_content"]
 
-        output_parts.append(
-            f"--- Kết quả {i} ---\n"
-            f"📜 Nguồn: {source}\n"
-            f"📌 Điều: {article}\n"
-            f"📄 Nội dung:\n{content}\n"
-        )
-
-    return "\n".join(output_parts)
+@tool
+def generate_answer_tool(query: str, context_json: str) -> str:
+    """Tạo câu trả lời pháp lý hoàn chỉnh từ danh sách tài liệu tìm kiếm được (context).
+    Sử dụng công cụ này sau khi đã thực hiện tra cứu tài liệu bằng các công cụ tìm kiếm và cần tổng hợp câu trả lời chính xác, đáng tin cậy.
+    """
+    from src.llm import get_llm
+    from langchain_core.messages import HumanMessage
+    
+    try:
+        contexts = json.loads(context_json)
+    except Exception:
+        # Fallback if the input is not a JSON list (e.g. raw text)
+        contexts = [context_json]
+        
+    formatted_contexts = []
+    if not isinstance(contexts, list):
+        contexts = [contexts]
+        
+    for idx, doc in enumerate(contexts, 1):
+        if isinstance(doc, str):
+            content = doc
+            source = "N/A"
+            article = "N/A"
+        elif isinstance(doc, dict):
+            content = doc.get("page_content", "")
+            meta = doc.get("metadata", {})
+            source = meta.get("law_name", meta.get("filename", "N/A"))
+            article = meta.get("article", "N/A")
+        else:
+            content = str(doc)
+            source = "N/A"
+            article = "N/A"
+            
+        formatted_contexts.append(f"Tài liệu {idx} (Nguồn: {source}, Điều: {article}):\n{content}")
+        
+    context_str = "\n\n".join(formatted_contexts)
+    prompt = (
+        f"Bạn là trợ lý pháp lý AI chuyên giải đáp câu hỏi dựa trên dữ liệu luật pháp Việt Nam.\n\n"
+        f"Hãy trả lời câu hỏi sau bằng tiếng Việt chuẩn, rõ ràng và chính xác. "
+        f"Chỉ trả lời dựa trên thông tin có trong phần Tài liệu tham khảo dưới đây. Tuyệt đối không tự suy diễn hoặc bịa đặt điều luật hay số Điều/Khoản.\n\n"
+        f"Câu hỏi: {query}\n\n"
+        f"Tài liệu tham khảo:\n{context_str}\n\n"
+        f"Câu trả lời:"
+    )
+    
+    llm = get_llm()
+    res = llm.invoke([HumanMessage(content=prompt)])
+    if hasattr(res, "content"):
+        return str(res.content).strip()
+    return str(res).strip()
 
 
 def grade_documents(query: str, documents: list[dict]) -> list[dict]:
@@ -54,9 +160,11 @@ def grade_documents(query: str, documents: list[dict]) -> list[dict]:
     if not documents:
         return []
 
+    if not settings.use_llm_grader:
+        return documents
+
     from src.llm import get_llm
     from langchain_core.messages import HumanMessage
-    import json
 
     llm = get_llm()
     relevant_docs = []
@@ -129,4 +237,4 @@ def grade_documents(query: str, documents: list[dict]) -> list[dict]:
 
 def get_retrieval_tools() -> list:
     """Return all retrieval-related tools."""
-    return [search_legal_documents]
+    return [dense_search_tool, hybrid_search_tool, graph_traverse_tool, generate_answer_tool]

@@ -9,19 +9,27 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from configs.setting import settings
 
 
+_chroma_store = None
+
+
 def get_chroma_store():
-    """Create or open a persistent Chroma vector store."""
+    """Create or return a cached persistent Chroma vector store."""
+    global _chroma_store
+    if _chroma_store is not None:
+        return _chroma_store
+
     from langchain_community.vectorstores import Chroma
     from src.indexing.embeddings import get_embedding_function
 
     persist_dir = settings.chroma_persist_dir
     collection = settings.chroma_collection
 
-    return Chroma(
+    _chroma_store = Chroma(
         collection_name=collection,
         embedding_function=get_embedding_function(),
         persist_directory=persist_dir,
     )
+    return _chroma_store
 
 
 def reset_collection() -> None:
@@ -34,9 +42,7 @@ def reset_collection() -> None:
 
 
 def add_documents(chunks: list[dict], ids: list[str] | None = None) -> None:
-    """Add chunked documents to ChromaDB.
-    Each chunk is a dict with 'page_content' and 'metadata'.
-    """
+    """Add chunked documents to ChromaDB in batches to prevent exceeding max batch size."""
     from langchain_core.documents import Document
 
     store = get_chroma_store()
@@ -46,8 +52,15 @@ def add_documents(chunks: list[dict], ids: list[str] | None = None) -> None:
     ]
     if ids is None:
         ids = [_stable_chunk_id(c, i) for i, c in enumerate(chunks)]
-    store.add_documents(docs, ids=ids)
-    print(f"  ✅ Added {len(docs)} chunks to ChromaDB")
+    
+    # ChromaDB has a maximum batch size limit of 5461. Using 4000 for safety.
+    batch_size = 4000
+    for i in range(0, len(docs), batch_size):
+        batch_docs = docs[i : i + batch_size]
+        batch_ids = ids[i : i + batch_size]
+        store.add_documents(batch_docs, ids=batch_ids)
+        
+    print(f"  ✅ Added {len(docs)} chunks to ChromaDB in batches of {batch_size}")
 
 
 def similarity_search(query: str, k: int | None = None) -> list:

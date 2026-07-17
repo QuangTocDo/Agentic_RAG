@@ -18,10 +18,30 @@ def main():
         description="Nạp dữ liệu văn bản pháp luật vào hệ thống RAG."
     )
     parser.add_argument(
+        "--source",
+        type=str,
+        choices=["local", "hf"],
+        default="local",
+        help="Nguồn văn bản pháp luật: 'local' (thư mục cục bộ) hoặc 'hf' (Hugging Face dataset)."
+    )
+    parser.add_argument(
+        "--ids",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Danh sách ID văn bản cần nạp khi chọn nguồn 'hf'."
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=1000,
+        help="Giới hạn số lượng tài liệu cần tải khi source='hf' và không truyền --ids. Dùng 0 hoặc số âm để tải toàn bộ."
+    )
+    parser.add_argument(
         "--path",
         type=str,
         default=os.path.join(PROJECT_ROOT, "data", "legal_docs"),
-        help="Đường dẫn tới thư mục hoặc file chứa văn bản pháp luật.",
+        help="Đường dẫn tới thư mục hoặc file chứa văn bản pháp luật (dùng khi source='local').",
     )
     parser.add_argument(
         "--reset",
@@ -36,12 +56,21 @@ def main():
 
     # Step 1: Load documents
     print("\n📂 Bước 1: Đọc tài liệu...")
-    from src.ingestion.loader import load_directory, load_text_file
-
-    if os.path.isdir(args.path):
-        docs = load_directory(args.path)
+    if args.source == "hf":
+        from src.ingestion.loader import load_hf_dataset
+        if args.ids:
+            print(f"   Đang nạp dữ liệu từ Hugging Face cho các ID: {args.ids}...")
+        elif args.limit <= 0:
+            print("   Đang nạp toàn bộ dữ liệu từ Hugging Face...")
+        else:
+            print(f"   Đang nạp dữ liệu từ Hugging Face cho {args.limit} tài liệu đầu tiên...")
+        docs = load_hf_dataset(args.ids, limit=args.limit)
     else:
-        docs = [load_text_file(args.path)]
+        from src.ingestion.loader import load_directory, load_text_file
+        if os.path.isdir(args.path):
+            docs = load_directory(args.path)
+        else:
+            docs = [load_text_file(args.path)]
 
     print(f"   Đã đọc {len(docs)} tài liệu")
     for doc in docs:
