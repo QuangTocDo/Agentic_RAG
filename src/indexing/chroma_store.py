@@ -18,7 +18,7 @@ def get_chroma_store():
     if _chroma_store is not None:
         return _chroma_store
 
-    from langchain_community.vectorstores import Chroma
+    from langchain_chroma import Chroma
     from src.indexing.embeddings import get_embedding_function
 
     persist_dir = settings.chroma_persist_dir
@@ -33,10 +33,18 @@ def get_chroma_store():
 
 
 def reset_collection() -> None:
-    """Delete the current Chroma collection so a full ingest starts cleanly."""
+    """Delete all documents in the current Chroma collection so a full ingest starts cleanly."""
     store = get_chroma_store()
     try:
-        store.delete_collection()
+        data = store.get()
+        ids = data.get("ids", [])
+        if ids:
+            # Delete documents in batches to avoid exceeding limits
+            batch_size = 4000
+            for i in range(0, len(ids), batch_size):
+                batch_ids = ids[i : i + batch_size]
+                store.delete(ids=batch_ids)
+            print(f"  🧹 Deleted {len(ids)} existing documents from Chroma collection.")
     except Exception as e:
         print(f"  ⚠️  Could not reset Chroma collection ({e})")
 
@@ -51,7 +59,7 @@ def add_documents(chunks: list[dict], ids: list[str] | None = None) -> None:
         for c in chunks
     ]
     if ids is None:
-        ids = [_stable_chunk_id(c, i) for i, c in enumerate(chunks)]
+        ids = [c.get("metadata", {}).get("chunk_id") or _stable_chunk_id(c, i) for i, c in enumerate(chunks)]
     
     # ChromaDB has a maximum batch size limit of 5461. Using 4000 for safety.
     batch_size = 4000

@@ -71,12 +71,13 @@ class LegalGraph:
 
         print(f"  ✅ Legal graph built: {self.graph.number_of_nodes()} nodes, {self.graph.number_of_edges()} edges")
 
-    def append_from_chunks(self, new_chunks: list[dict]) -> None:
+    def append_from_chunks(self, new_chunks: list[dict], load_from_disk: bool = True) -> None:
         """Load existing graph, append new chunks, detect references in O(M)."""
-        try:
-            self.load()
-        except FileNotFoundError:
-            self.graph = nx.DiGraph()
+        if load_from_disk:
+            try:
+                self.load()
+            except FileNotFoundError:
+                self.graph = nx.DiGraph()
 
         new_node_ids = []
         for i, chunk in enumerate(new_chunks):
@@ -237,9 +238,9 @@ def build_graph(chunks: list[dict]) -> None:
     graph.save()
 
 
-def append_graph(chunks: list[dict]) -> None:
+def append_graph(chunks: list[dict], load_from_disk: bool = True) -> None:
     graph = get_graph()
-    graph.append_from_chunks(chunks)
+    graph.append_from_chunks(chunks, load_from_disk=load_from_disk)
     graph.save()
 
 

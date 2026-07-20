@@ -68,12 +68,13 @@ class BM25Index:
         self.corpus_chunks = data["corpus"]
         print(f"  ✅ BM25 index loaded ({len(self.corpus_chunks)} docs)")
 
-    def append_and_build(self, chunks: list[dict]) -> None:
+    def append_and_build(self, chunks: list[dict], load_from_disk: bool = True) -> None:
         """Load existing index, append new chunks, deduplicate, and build."""
-        try:
-            self.load()
-        except FileNotFoundError:
-            self.corpus_chunks = []
+        if load_from_disk:
+            try:
+                self.load()
+            except FileNotFoundError:
+                self.corpus_chunks = []
         
         # Deduplicate to avoid adding the same chunks twice
         existing_contents = {c["page_content"] for c in self.corpus_chunks}
@@ -107,6 +108,7 @@ def _tokenize(text: str) -> list[str]:
     """Tokenize Vietnamese text for BM25, with a regex fallback."""
     text = text.lower()
     try:
+        # pyrefly: ignore [missing-import]
         from underthesea import word_tokenize
 
         text = word_tokenize(text, format="text")

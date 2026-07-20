@@ -1,24 +1,106 @@
 """
-Document loader — load legal .txt files from a directory.
-Each file is read in full and returned as a Document-like dict.
+Document loader — load legal .txt files from a directory or stream from Hugging Face.
+Each file is returned as a Document-like dict with standardized metadata.
 """
+from __future__ import annotations
 import os
+import re
 from pathlib import Path
+from typing import Generator
+
+
+def _clean_val(val, default="unknown") -> str:
+    """Helper to clean metadata values and handle NaN/nulls."""
+    import pandas as pd
+    if pd.isna(val) or val is None or str(val).strip() in {"", "nan", "NaN", "None", "..."}:
+        return default
+    return str(val).strip()
+
+
+def _extract_local_metadata(content: str, file_path: Path) -> dict:
+    """Extract metadata from local legal text files using heuristics and regex."""
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    
+    # 1. law_name (title)
+    law_name = lines[0] if lines else "unknown"
+    
+    # 2. so_ky_hieu (e.g. 91/2015/QH13)
+    so_ky_hieu = "unknown"
+    if len(lines) > 1:
+        match = re.search(r"(?:Luật số|Số|Nghị định số|Quyết định số)\s*[:\s]*([^\)]+)", lines[1], re.IGNORECASE)
+        if match:
+            so_ky_hieu = match.group(1).strip()
+        else:
+            for l in lines[:5]:
+                match = re.search(r"Số\s*[:\s]*([0-9]+/[0-9]+/QH[0-9]+|[0-9]+/[0-9]+/[A-Z-]+)", l, re.IGNORECASE)
+                if match:
+                    so_ky_hieu = match.group(1).strip()
+                    break
+    
+    # 3. loai_van_ban
+    loai_van_ban = "unknown"
+    title_lower = law_name.lower()
+    if "bộ luật" in title_lower:
+        loai_van_ban = "Bộ luật"
+    elif "luật" in title_lower:
+        loai_van_ban = "Luật"
+    elif "nghị định" in title_lower:
+        loai_van_ban = "Nghị định"
+    elif "nghị quyết" in title_lower:
+        loai_van_ban = "Nghị quyết"
+    elif "thông tư" in title_lower:
+        loai_van_ban = "Thông tư"
+    elif "quuyết định" in title_lower:
+        loai_van_ban = "Quyết định"
+
+    # 4. ngay_ban_hanh, ngay_co_hieu_luc, co_quan_ban_hanh
+    ngay_ban_hanh = "unknown"
+    ngay_co_hieu_luc = "unknown"
+    co_quan_ban_hanh = "unknown"
+    
+    for l in lines[:10]:
+        if "ban hành" in l.lower() or "thông qua ngày" in l.lower():
+            date_match = re.search(r"ngày\s+(\d+)\s+tháng\s+(\d+)\s+năm\s+(\d+)", l, re.IGNORECASE)
+            if date_match:
+                ngay_ban_hanh = f"{date_match.group(1).zfill(2)}/{date_match.group(2).zfill(2)}/{date_match.group(3)}"
+        if "hiệu lực" in l.lower() and "từ ngày" in l.lower():
+            date_match = re.search(r"ngày\s+(\d+)\s+tháng\s+(\d+)\s+năm\s+(\d+)", l, re.IGNORECASE)
+            if date_match:
+                ngay_co_hieu_luc = f"{date_match.group(1).zfill(2)}/{date_match.group(2).zfill(2)}/{date_match.group(3)}"
+                
+        if "quốc hội" in l.lower():
+            co_quan_ban_hanh = "Quốc hội"
+        elif "chính phủ" in l.lower():
+            co_quan_ban_hanh = "Chính phủ"
+        elif "bộ" in l.lower() and co_quan_ban_hanh == "unknown":
+            match = re.search(r"Bộ\s+([A-Za-zĐđÀ-ỹ\s]+)", l)
+            if match:
+                co_quan_ban_hanh = f"Bộ {match.group(1).strip()}"
+
+    return {
+        "source": str(file_path.resolve()),
+        "filename": file_path.name,
+        "law_name": law_name,
+        "so_ky_hieu": so_ky_hieu,
+        "loai_van_ban": loai_van_ban,
+        "ngay_ban_hanh": ngay_ban_hanh,
+        "ngay_co_hieu_luc": ngay_co_hieu_luc,
+        "ngay_het_hieu_luc": "unknown",
+        "tinh_trang_hieu_luc": "Còn hiệu lực",
+        "co_quan_ban_hanh": co_quan_ban_hanh,
+        "nguon_thu_thap": "local"
+    }
 
 
 def load_text_file(file_path: str) -> dict:
-    """Load a single .txt file and return a document dict."""
+    """Load a single .txt file and return a document dict with standardized metadata."""
     path = Path(file_path)
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
     return {
         "page_content": content,
-        "metadata": {
-            "source": str(path.resolve()),
-            "filename": path.name,
-            "law_name": _extract_law_name(content),
-        },
+        "metadata": _extract_local_metadata(content, path),
     }
 
 
@@ -37,15 +119,20 @@ def load_directory(dir_path: str, extensions: tuple[str, ...] = (".txt",)) -> li
     return docs
 
 
-# --------------- helpers ---------------
+def stream_directory(dir_path: str, extensions: tuple[str, ...] = (".txt",)) -> Generator[dict, None, None]:
+    """Yield all supported files from a directory recursively for streaming."""
+    dir_p = Path(dir_path)
+    if not dir_p.exists():
+        raise FileNotFoundError(f"Directory not found: {dir_path}")
 
-def _extract_law_name(text: str) -> str:
-    """Try to extract the law name from the first non-empty line."""
-    for line in text.splitlines():
-        line = line.strip()
-        if line:
-            return line
-    return "Unknown"
+    for root, _, files in os.walk(dir_p):
+        for fname in sorted(files):
+            if fname.lower().endswith(extensions):
+                fpath = os.path.join(root, fname)
+                try:
+                    yield load_text_file(fpath)
+                except Exception as e:
+                    print(f"⚠️ Không thể đọc file {fname}: {e}")
 
 
 def load_hf_dataset(doc_ids: list[int] | None = None, limit: int = 1000) -> list[dict]:
@@ -55,6 +142,14 @@ def load_hf_dataset(doc_ids: list[int] | None = None, limit: int = 1000) -> list
     Use limit <= 0 to load all documents when doc_ids is not provided.
     
     Returns a list of document dicts.
+    """
+    return list(stream_hf_dataset(doc_ids, limit))
+
+
+def stream_hf_dataset(doc_ids: list[int] | None = None, limit: int = 1000) -> Generator[dict, None, None]:
+    """
+    Connect to Hugging Face repo 'th1nhng0/vietnamese-legal-documents'
+    and yield documents by their IDs or up to a limit in a memory-efficient generator.
     """
     import os
     import pandas as pd
@@ -98,57 +193,62 @@ def load_hf_dataset(doc_ids: list[int] | None = None, limit: int = 1000) -> list
         
         if filtered_meta.empty:
             print("   ⚠️ Không tìm thấy metadata hợp lệ.")
-            return []
+            return
             
-        # 2. Read content.parquet
-        print("📂 Đang tải content.parquet (đọc có bộ lọc)...")
+        # Create metadata lookup by id
+        meta_lookup = filtered_meta.set_index("id").to_dict(orient="index")
+        str_ids = {str(i) for i in doc_ids}
+        yielded_ids = set()
+        
+        # 2. Read content.parquet (streaming row groups)
+        print("📂 Đang tải content.parquet (đọc có bộ lọc theo row group)...")
         with fs.open(content_url, "rb") as f:
             pf = pq.ParquetFile(f)
-            
-            str_ids = {str(i) for i in doc_ids}
-            matching_rows = []
             
             for rg_idx in range(pf.num_row_groups):
                 rg = pf.read_row_group(rg_idx, columns=["id", "content_html"])
                 df_rg = rg.to_pandas()
                 df_match = df_rg[df_rg["id"].astype(str).isin(str_ids)]
-                if not df_match.empty:
-                    matching_rows.append(df_match)
-            
-            if not matching_rows:
-                print("   ⚠️ Không tìm thấy nội dung văn bản nào khớp trong content.parquet.")
-                return []
                 
-            df_content = pd.concat(matching_rows, ignore_index=True)
-            df_content = df_content.drop_duplicates(subset=["id"])
-            print(f"   Đã tìm thấy {len(df_content)} nội dung văn bản tương ứng (sau khi khử trùng).")
-            
-        # Merge metadata and content on ID
-        df_content["id"] = df_content["id"].astype(int)
-        merged = pd.merge(filtered_meta, df_content, on="id", how="inner")
-        
-        docs = []
-        for _, row in merged.iterrows():
-            doc_id = int(row["id"])
-            title = str(row["title"])
-            so_ky_hieu = str(row["so_ky_hieu"])
-            tinh_trang_hieu_luc = str(row["tinh_trang_hieu_luc"])
-            content_html = str(row["content_html"])
-            
-            docs.append({
-                "page_content": content_html,
-                "metadata": {
-                    "source": f"hf://{repo_id}/{doc_id}",
-                    "filename": f"{doc_id}.html",
-                    "law_name": title,
-                    "doc_id": doc_id,
-                    "so_ky_hieu": so_ky_hieu,
-                    "tinh_trang_hieu_luc": tinh_trang_hieu_luc
-                }
-            })
-            
-        return docs
-        
+                if not df_match.empty:
+                    for _, row in df_match.iterrows():
+                        row_id = int(row["id"])
+                        if row_id in yielded_ids:
+                            continue
+                        yielded_ids.add(row_id)
+                        
+                        meta = meta_lookup.get(row_id)
+                        if not meta:
+                            continue
+                        
+                        title = _clean_val(meta.get("title", ""))
+                        so_ky_hieu = _clean_val(meta.get("so_ky_hieu", ""))
+                        loai_van_ban = _clean_val(meta.get("loai_van_ban", ""))
+                        ngay_ban_hanh = _clean_val(meta.get("ngay_ban_hanh", ""))
+                        ngay_co_hieu_luc = _clean_val(meta.get("ngay_co_hieu_luc", ""))
+                        ngay_het_hieu_luc = _clean_val(meta.get("ngay_het_hieu_luc", ""))
+                        tinh_trang_hieu_luc = _clean_val(meta.get("tinh_trang_hieu_luc", ""))
+                        co_quan_ban_hanh = _clean_val(meta.get("co_quan_ban_hanh", ""))
+                        nguon_thu_thap = _clean_val(meta.get("nguon_thu_thap", "Hugging Face"))
+                        
+                        yield {
+                            "page_content": str(row["content_html"]),
+                            "metadata": {
+                                "source": f"hf://{repo_id}/{row_id}",
+                                "filename": f"{row_id}.html",
+                                "law_name": title,
+                                "doc_id": row_id,
+                                "so_ky_hieu": so_ky_hieu,
+                                "loai_van_ban": loai_van_ban,
+                                "ngay_ban_hanh": ngay_ban_hanh,
+                                "ngay_co_hieu_luc": ngay_co_hieu_luc,
+                                "ngay_het_hieu_luc": ngay_het_hieu_luc,
+                                "tinh_trang_hieu_luc": tinh_trang_hieu_luc,
+                                "co_quan_ban_hanh": co_quan_ban_hanh,
+                                "nguon_thu_thap": nguon_thu_thap
+                            }
+                        }
+                        
     except Exception as e:
         print(f"❌ Lỗi khi tải dữ liệu từ Hugging Face: {e}")
         raise e
