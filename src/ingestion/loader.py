@@ -153,7 +153,9 @@ def stream_hf_dataset(doc_ids: list[int] | None = None, limit: int = 1000) -> Ge
     """
     import os
     import pandas as pd
+    # pyrefly: ignore [missing-import]
     import pyarrow.parquet as pq
+    # pyrefly: ignore [missing-import]
     import fsspec
     from configs.setting import settings
 

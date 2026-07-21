@@ -18,6 +18,7 @@ def get_chroma_store():
     if _chroma_store is not None:
         return _chroma_store
 
+    # pyrefly: ignore [missing-import]
     from langchain_chroma import Chroma
     from src.indexing.embeddings import get_embedding_function
 
@@ -33,20 +34,18 @@ def get_chroma_store():
 
 
 def reset_collection() -> None:
-    """Delete all documents in the current Chroma collection so a full ingest starts cleanly."""
-    store = get_chroma_store()
-    try:
-        data = store.get()
-        ids = data.get("ids", [])
-        if ids:
-            # Delete documents in batches to avoid exceeding limits
-            batch_size = 4000
-            for i in range(0, len(ids), batch_size):
-                batch_ids = ids[i : i + batch_size]
-                store.delete(ids=batch_ids)
-            print(f"  🧹 Deleted {len(ids)} existing documents from Chroma collection.")
-    except Exception as e:
-        print(f"  ⚠️  Could not reset Chroma collection ({e})")
+    """Delete the persistent Chroma directory to clear the database and schemas cleanly."""
+    import shutil
+    persist_dir = settings.chroma_persist_dir
+    if os.path.exists(persist_dir):
+        try:
+            shutil.rmtree(persist_dir)
+            print(f"  🧹 Deleted persistent Chroma directory: {persist_dir}")
+        except Exception as e:
+            print(f"  ⚠️  Could not delete persistent Chroma directory ({e})")
+    
+    global _chroma_store
+    _chroma_store = None
 
 
 def add_documents(chunks: list[dict], ids: list[str] | None = None) -> None:

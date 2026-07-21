@@ -64,6 +64,7 @@ class DeepAgent:
         return self.agent_graph.invoke(input_data)
 
     def as_tool(self):
+        # pyrefly: ignore [missing-import]
         from langchain_core.tools import Tool
         
         def run_agent(query: str) -> str:
@@ -94,6 +95,7 @@ class DeepAgent:
 
 
 def create_deep_agent(model, tools, system_prompt: str) -> DeepAgent:
+    # pyrefly: ignore [missing-import]
     from langgraph.prebuilt import create_react_agent
     
     if "rag" in system_prompt.lower() or "pháp lý" in system_prompt.lower():

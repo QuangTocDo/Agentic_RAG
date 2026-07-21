@@ -20,6 +20,7 @@ class BM25Index:
 
     def build(self, chunks: list[dict]) -> None:
         """Build BM25 index from chunks."""
+        # pyrefly: ignore [missing-import]
         from rank_bm25 import BM25Okapi
 
         self.corpus_chunks = chunks
